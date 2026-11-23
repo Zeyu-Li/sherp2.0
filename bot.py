@@ -1,234 +1,121 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
-from datetime import datetime, timedelta
 import json
 from dotenv import load_dotenv
 import os
-import requests
-from io import BytesIO
 import random
 
-import schedubuddy.schedule_session as schedule_session
-import util
-from schedubuddy.draw_sched import draw_schedule
+from helper import get_config
+
+from cogs import setup_all_cogs
+from typing import Optional
 
 SHERP_ID = "212613981465083906"
 SHERP_URL = "https://media.giphy.com/media/artj92V8o75VPL7AeQ/giphy.gif"
-SCHEDUBUDDY_ROOT = 'https://schedubuddy1.herokuapp.com//api/v1/'
-KATTIS_PROBLEM_URL = "https://open.kattis.com/problems/"
-KATTIS_CONTEST_URL = "https://open.kattis.com/problem-sources/"
-SNIPE_TIMER = 10 # seconds
+__DEFAULT_GUILDS = [402891511991369740]  # UAlberta CS server ID
 
 # load the .env file
 load_dotenv()
 # create a client with all intents
-client = commands.Bot(command_prefix='?', intents=discord.Intents.all())
+app_id = os.getenv("DISCORD_APP_ID")
 
-# ?sched plugin
-schedule_session.setup(client)
+# Never let a message ping anyone: several commands echo user input, which could
+# otherwise contain @everyone, role or user mentions.
+client = commands.Bot(
+    command_prefix="?",
+    intents=discord.Intents.all(),
+    application_id=app_id,
+    allowed_mentions=discord.AllowedMentions.none(),
+)
+_commands_synced = False
+
+
+__cfg = get_config().get("general", None)
+GUILDS = (
+    [discord.Object(id=gid) for gid in __cfg.get("guild_ids", __DEFAULT_GUILDS)]
+    if __cfg
+    else [discord.Object(id=gid) for gid in __DEFAULT_GUILDS]
+)
+
+
+@client.event
+async def on_ready():
+    global _commands_synced
+
+    if _commands_synced:
+        return
+
+    await setup_all_cogs(client, GUILDS)
+
+    for guild in GUILDS:
+        commands = await client.tree.sync(guild=guild)
+        print(f"Synced {len(commands)} slash commands for guild {guild.id}")
+
+    _commands_synced = True
+
 
 # load commands.json
-with open("data/commands.json", "r", encoding='utf-8') as f:
+with open("data/commands.json", "r", encoding="utf-8") as f:
     cmds = json.load(f)
-with open("data/copypasta.json", "r", encoding='utf-8') as f:
+with open("data/copypasta.json", "r", encoding="utf-8") as f:
     pastas = json.load(f)
-with open("data/ualberta.ca.json", "r", encoding='utf-8') as f:
-    catalog = json.load(f)
-with open("data/kattis.json", "r", encoding='utf-8') as f:
-    kattis_links = json.load(f)
-with open("data/problems.json", "r", encoding='utf-8') as f:
-    kattis_problems = json.load(f)
-with open("data/contests.json", "r", encoding='utf-8') as f:
-    kattis_contests = json.load(f)
-with open("data/specific.json", "r", encoding='utf-8') as f:
-    kattis_specific = json.load(f)
 
-##### ?snipe
-class DeletedMsg:
-    def __init__(self, msg, attachment_path=None):
-        self.msg = msg
-        self.attachment_path = attachment_path
-        self.time = datetime.utcnow()
 
-deleted_messages = {} # {channel id : DeletedMsg}
+def slash_command_description(command_name: str) -> str:
+    return f"Run the {command_name} command."
+
+
+def make_trivial_slash_command(command_name: str, response: str):
+    async def callback(interaction: discord.Interaction):
+        await interaction.response.send_message(response)
+
+    callback.__name__ = f"slash_{command_name.replace('-', '_')}"
+    return app_commands.Command(
+        name=command_name,
+        description=slash_command_description(command_name),
+        callback=callback,
+    )
+
+
+for command, response in cmds.items():
+    if not command.startswith("?"):
+        continue
+    client.tree.add_command(
+        make_trivial_slash_command(command[1:], response),
+        guilds=GUILDS,
+    )
+
+
+@client.tree.command(name="pasta", description="Send a random copypasta.", guilds=GUILDS)
+async def pasta_slash(interaction: discord.Interaction):
+    await interaction.response.send_message(random.choice(pastas))
+
+
+# A command is trivial if its response is static string. These commands can
+# defined in a single file along with their responses.
+def is_trivial_command(c: str) -> Optional[str]:
+    cmd = c.strip()
+    if not cmd.startswith("?"):
+        return None
+    if cmd.count(" "):
+        return None
+
+    return cmds.get(cmd.lower(), None)
+
 
 @client.event
-async def on_message_delete(message):
-    attachment_path = None
-    if message.attachments:
-        attachment_path = await util.save_attachment(message.attachments[0])
-    deleted_messages[message.channel.id] = DeletedMsg(message, attachment_path)
-
-@client.command(name='snipe')
-async def snipe(ctx):
-    snipeTime = datetime.utcnow()
-    deletedmsg = deleted_messages.pop(ctx.channel.id, None)
-    if not deletedmsg or snipeTime - deletedmsg.time > timedelta(seconds=SNIPE_TIMER):
-        await ctx.send(f"Nothing found")
+async def on_message(message: discord.Message):
+    if message.author.bot:
         return
-    embed = discord.Embed(description=f"**{deletedmsg.msg.author.name}** said: {deletedmsg.msg.content}", color=0x00ff00)
-    if deletedmsg.attachment_path:
-        file = discord.File(deletedmsg.attachment_path, filename=deletedmsg.attachment_path.split("/")[-1])
-        embed.set_image(url=f"attachment://{file.filename}")
-        await ctx.send(embed=embed, file=file)
-    else:
-        await ctx.send(embed=embed)
 
-
-@client.event
-async def on_message(message):
-    # stops the bot from responding to itself
-    if message.author.bot: return
-    if message.content in cmds and message.content != "//":
-        # if string return string, if list return random element
-        if type(cmds[message.content]) == list:
-            response = random.choice(cmds[message.content])
-        else:
-            response = cmds[message.content]
-        await message.channel.send(SHERP_URL + response if message.author.id == SHERP_ID else response)
+    if resp := is_trivial_command(message.content):
+        await message.channel.send(resp)
         return
-    # find message.content in commands.json and append msg with the value
+
     elif "?pasta" in message.content:
         # pick a random copypasta from copypasta.json
         await message.channel.send(random.choice(pastas))
-    elif "?prereq" in message.content:
-        args = message.content.split(' ')
-        if not 3 <= len(args) <= 4:
-            await message.channel.send(f'Usage: `?prereq [department] [course]`, e.g. `?prereq cmput 229`')
-            return
-        dept = args[1] if len(args) == 3 else args[1] + ' ' + args[2]
-        course = args[2] if len(args) == 3 else args[3]
-        dept, course = dept.upper(), course.upper()
-        if not dept in catalog['courses']:
-            await message.channel.send(f'Could not find **{dept}**')
-            return
-        if not course in catalog['courses'][dept]:
-            await message.channel.send(f'Could not find **{course}** in the {dept} department')
-            return
-        catalog_obj = catalog['courses'][dept][course]
-        course_name = catalog_obj['name']
-        prereqs = catalog_obj.get('raw', 'No prerequisites')
-        await message.channel.send(f'**{dept} {course} - {course_name}**\n{prereqs}')
-    elif "?view" in message.content:
-        errmsg = ''
-        try:
-            args = message.content.split(' ')
-            term = args[1]
-            year = args[2]
-            room = '%20'.join(args[3:]).upper()
-            if term.lower() in ['f', 'fa', 'fall']: term = 'Fall'
-            elif term.lower() in ['w', 'wi', 'win', 'wint', 'winter']: term = 'Winter'
-            elif term.lower() in ['sp', 'spr', 'spring']: term = 'Spring'
-            elif term.lower() in ['su', 'sum', 'summ', 'summer']: term = 'Summer'
-            errmsg = "Enter a valid term, e.g. 'fall'"
-            assert(term in ['Fall', 'Winter', 'Spring', 'Summer'])
-            if year in ['2023', '23']: year = '2023'
-            elif year in ['2024', '24']: year = '2024'
-            errmsg = "Enter a valid year, e.g. '2024'"
-            assert(year in ['2023', '2024'])
-            termid = None
-            if year == '2023':
-                if term == 'Winter': termid = '1820'
-                elif term == 'Spring': termid = '1830'
-                elif term == 'Summer': termid = '1840'
-                elif term == 'Fall': termid = '1850'
-            elif year == '2024':
-                if term == 'Winter': termid = '1860'
-            errmsg = f"Could not find term {term} {year}"
-            assert(termid)
-        except:
-            await message.channel.send(errmsg)
-            return
-
-        url = SCHEDUBUDDY_ROOT + f'room-sched/?term={termid}&room={room}'
-        response = requests.get(url)
-        if response.status_code == 200:
-            data = json.loads(response.text)
-            image = draw_schedule(data['objects']['schedules'][0])
-            bufferedio = BytesIO()
-            image.save(bufferedio, format="PNG")
-            bufferedio.seek(0)
-            file = discord.File(bufferedio, filename="image.png")
-            await message.channel.send(file=file)
-    elif "?kattis" in message.content:
-        commands = []
-        commands.extend(list(kattis_links.keys()))
-        commands.extend(list(kattis_problems.keys()))
-        more = ["problem", "contest", "contests", "rank", "specific"]
-        commands.extend(more)
-
-        args = message.content.split(' ')
-        if len(args) != 2:
-            await message.channel.send("Usage ?kattis <cmd>. For a list of commands use\n\t?kattis help")
-            return
-        cmd = args[1]
-
-        if cmd == "help":
-            out = ""
-            out += "Commands:\n"
-            for cmd in commands:
-                out += '\t' + cmd + '\n'
-            await message.channel.send(out)
-            return
-        elif cmd == "problem":
-            problems = []
-            for k in kattis_problems:
-                problems.extend(kattis_problems[k])
-            problem = random.choices(problems)[0]
-            link = KATTIS_PROBLEM_URL + problem
-            await message.channel.send(link)
-            return
-        else:
-            if cmd in kattis_links:
-                await message.channel.send(kattis_links[cmd])
-                return
-            elif cmd == "contest":
-                contest = random.choices(kattis_contests["contests"])[0]
-                link = KATTIS_CONTEST_URL + contest
-                await message.channel.send(link)
-                return
-            elif cmd == "contests":
-                contest = random.choices(kattis_contests["contests"])
-                link = KATTIS_CONTEST_URL
-                await message.channel.send(link)
-                return
-            elif cmd == "rank":
-                link = 'https://open.kattis.com/ranklist'
-                await message.channel.send(link)
-                return
-            elif cmd == "specific":
-                out = "You can ask for a problem from one of the following topics:\n"
-                for k in kattis_specific:
-                    out += f'\t{k}\n'    
-                await message.channel.send(out)
-                return
-            elif cmd in kattis_problems:
-                problem = random.choices(kattis_problems[cmd])[0]
-                link = KATTIS_PROBLEM_URL + problem
-                await message.channel.send(link)
-                return
-            elif cmd in [k.split()[0] for k in kattis_specific]:
-                for k in kattis_specific:
-                    if cmd == k.split()[0]:
-                        cmd = k
-                problem = random.choices(kattis_specific[cmd])[0]
-                link = KATTIS_PROBLEM_URL + problem
-                await message.channel.send(link)
-                return
-            else:
-                await message.channel.send("Usage ?kattis <cmd>. For a list of commands use\n\t?kattis help")
-                return
-    elif "?bbq23" in message.content:
-        embed = discord.Embed(title="BBQ 23",color=3447003,description="Here's a bunch of gigachads together")
-        embed.set_image(url="https://cdn.discordapp.com/attachments/968245983697842196/1101298256459346000/IMG_2316.jpg")
-        await message.channel.send(embed=embed)
-    
-    elif "?java" in message.content:
-        embed = discord.Embed(title="Java",color = 3447003,description="Have you tried Kotlin?")
-        embed.set_image(url="https://cdn.discordapp.com/attachments/968245983697842196/1101253691392143410/41BDFE8C-2BC0-4E2B-A3C9-539962B71707.jpg")
-        await message.channel.send(embed=embed)
-
-
     await client.process_commands(message)
 
 
