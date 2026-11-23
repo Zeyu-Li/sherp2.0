@@ -72,6 +72,7 @@ class Misc(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.hybrid_command(name="sync", description="Sync slash commands for this server.")
+    @commands.is_owner()
     async def sync(self, ctx):
         # commands = self.__bot.tree.get_commands(guild=ctx.guild)
         commands = await self.__bot.tree.sync(guild=ctx.guild)

@@ -20,7 +20,14 @@ load_dotenv()
 # create a client with all intents
 app_id = os.getenv("DISCORD_APP_ID")
 
-client = commands.Bot(command_prefix="?", intents=discord.Intents.all(), application_id=app_id)
+# Never let a message ping anyone: several commands echo user input, which could
+# otherwise contain @everyone, role or user mentions.
+client = commands.Bot(
+    command_prefix="?",
+    intents=discord.Intents.all(),
+    application_id=app_id,
+    allowed_mentions=discord.AllowedMentions.none(),
+)
 _commands_synced = False
 
 

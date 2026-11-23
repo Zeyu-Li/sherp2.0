@@ -68,9 +68,9 @@ def get_draw_text(course_class, location=""):
             instructor_initials.append(instructor_full[i][0].upper() + ". ")
         instructor_text = "".join(instructor_initials) + instructor_full[-1]
         if (
-            __draw_sched_font.getsize(instructor_text)[0] > box_width - 3
+            __draw_sched_font.getlength(instructor_text) > box_width - 3
         ):  # pop until fit with elipses
-            while __draw_sched_font.getsize(instructor_text + "...")[0] > box_width - 3:
+            while __draw_sched_font.getlength(instructor_text + "...") > box_width - 3:
                 instructor_text = instructor_text[:-1]
             instructor_text += "..."
 

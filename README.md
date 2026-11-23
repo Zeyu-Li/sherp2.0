@@ -43,7 +43,7 @@ Here are the steps you need to follow if you want to run the bot locally for tes
    * Clone the repo and cd into the root directory
    * Create a .env file and add your bot token and application ID like this:
 ```python
-BOT_TOKEN = 'MTEwMjMzNzc5ODQ1NzAxNjUyMw.GsbpKF.6Vocc_sXkDgXcH9Yv_Hhbayz6zhjc2FIgA4H9k'
+BOT_TOKEN = 'your-bot-token'
 DISCORD_APP_ID = 1099815557760373847
 ```
    * install requirements using:
@@ -54,7 +54,7 @@ pip install -r requirements.txt
 ```
 python .\bot.py
 ```
-   * when running the bot for the first time, please run `?sync` in order for slash commands to work without issue
+   * when running the bot for the first time, please run `?sync` (bot owner only) in order for slash commands to work without issue
 
 ## Contributing
 
